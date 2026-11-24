@@ -31,3 +31,21 @@ export async function api(path, { method = 'GET', body } = {}) {
   if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
   return data;
 }
+
+export async function downloadReport(assessmentId) {
+  const token = getToken();
+  const res = await fetch(`/api/assessments/${assessmentId}/report`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.error || `HTTP ${res.status}`);
+  }
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `vulneralens-report-${assessmentId}.pdf`;
+  a.click();
+  URL.revokeObjectURL(url);
+}

@@ -1,0 +1,52 @@
+services:
+  db:
+    image: mariadb:10.4
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpassword
+      MYSQL_DATABASE: vulneralens_db
+    ports:
+      - "3306:3306"
+    volumes:
+      - db_data:/var/lib/mysql
+
+  dvwa:
+    image: vulnerables/web-dvwa:latest
+    ports:
+      - "8080:80"
+
+  zap:
+    image: ghcr.io/zaproxy/zaproxy:stable
+    command: zap.sh -daemon -host 0.0.0.0 -port 8090 -config api.disablekey=true -config api.addrs.addr.name=.* -config api.addrs.addr.regex=true
+    ports:
+      - "8090:8090"
+
+  backend:
+    build: ./backend
+    ports:
+      - "5050:5050"
+    environment:
+      PORT: 5050
+      DB_HOST: db
+      DB_PORT: 3306
+      DB_NAME: vulneralens_db
+      DB_USER: root
+      DB_PASSWORD: rootpassword
+      JWT_SECRET: ${JWT_SECRET:-change_me_in_production}
+      ALLOWED_TARGET_HOSTS: localhost,127.0.0.1,dvwa
+      ZAP_API_URL: http://zap:8090
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-2.5-flash}
+    depends_on:
+      - db
+      - dvwa
+      - zap
+
+  frontend:
+    build: ./frontend
+    ports:
+      - "5173:5173"
+    depends_on:
+      - backend
+
+volumes:
+  db_data:
