@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import PDFDocument from 'pdfkit';
 import pool from '../config/db.js';
 import { authenticate, authorize } from '../middleware/auth.js';
 import { isPositiveInt } from '../utils/validators.js';
@@ -112,6 +113,119 @@ router.delete('/:id', authorize('administrator'), async (req, res) => {
     return res.json({ message: 'Assessment deleted' });
   } catch {
     return res.status(500).json({ error: 'Failed to delete assessment' });
+  }
+});
+
+// DB-driven dashboard counts for an assessment
+router.get('/:id/dashboard', authorize('administrator', 'assessor'), async (req, res) => {
+  const assessmentId = Number(req.params.id);
+  if (!isPositiveInt(assessmentId)) {
+    return res.status(400).json({ error: 'Invalid assessment ID' });
+  }
+
+  try {
+    const [sevRows] = await pool.execute(
+      `SELECT f.severity, COUNT(*) AS count
+       FROM findings f JOIN scans s ON f.scan_id = s.id
+       WHERE s.assessment_id = ?
+       GROUP BY f.severity`,
+      [assessmentId]
+    );
+    const [catRows] = await pool.execute(
+      `SELECT f.category, COUNT(*) AS count
+       FROM findings f JOIN scans s ON f.scan_id = s.id
+       WHERE s.assessment_id = ?
+       GROUP BY f.category
+       ORDER BY count DESC`,
+      [assessmentId]
+    );
+    const [statusRows] = await pool.execute(
+      `SELECT f.status, COUNT(*) AS count
+       FROM findings f JOIN scans s ON f.scan_id = s.id
+       WHERE s.assessment_id = ?
+       GROUP BY f.status`,
+      [assessmentId]
+    );
+
+    const bySeverity = { critical: 0, high: 0, medium: 0, low: 0, info: 0 };
+    for (const r of sevRows) bySeverity[r.severity] = Number(r.count);
+
+    const byStatus = { open: 0, confirmed: 0, false_positive: 0, mitigated: 0 };
+    for (const r of statusRows) byStatus[r.status] = Number(r.count);
+
+    const byCategory = catRows.map((r) => ({ category: r.category, count: Number(r.count) }));
+    const totalFindings = Object.values(byStatus).reduce((a, b) => a + b, 0);
+
+    return res.json({ totalFindings, bySeverity, byCategory, byStatus });
+  } catch {
+    return res.status(500).json({ error: 'Failed to load dashboard counts' });
+  }
+});
+
+// Generate PDF report containing ONLY confirmed findings
+router.get('/:id/report', authorize('administrator', 'assessor'), async (req, res) => {
+  const assessmentId = Number(req.params.id);
+  if (!isPositiveInt(assessmentId)) {
+    return res.status(400).json({ error: 'Invalid assessment ID' });
+  }
+
+  try {
+    const [assessments] = await pool.execute('SELECT * FROM assessments WHERE id = ?', [assessmentId]);
+    if (assessments.length === 0) {
+      return res.status(404).json({ error: 'Assessment not found' });
+    }
+    const assessment = assessments[0];
+
+    const [confirmed] = await pool.execute(
+      `SELECT f.*
+       FROM findings f
+       JOIN scans s ON f.scan_id = s.id
+       WHERE s.assessment_id = ? AND f.status = 'confirmed'
+       ORDER BY FIELD(f.severity, 'critical', 'high', 'medium', 'low', 'info'), f.id ASC`,
+      [assessmentId]
+    );
+
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="vulneralens-report-${assessmentId}.pdf"`
+    );
+
+    const doc = new PDFDocument({ margin: 50 });
+    doc.pipe(res);
+
+    doc.fontSize(20).text('VulneraLens Security Assessment Report', { underline: true });
+    doc.moveDown(0.5);
+    doc.fontSize(12).text(`Assessment: ${assessment.name}`);
+    if (assessment.description) doc.text(`Description: ${assessment.description}`);
+    doc.text(`Generated: ${new Date().toISOString()}`);
+    doc.text(`Confirmed Findings: ${confirmed.length}`);
+    doc.moveDown();
+
+    if (confirmed.length === 0) {
+      doc.fontSize(11).text('No confirmed findings were recorded for this assessment.');
+    } else {
+      confirmed.forEach((f, idx) => {
+        doc.fontSize(13).text(`${idx + 1}. [${String(f.severity).toUpperCase()}] ${f.title}`);
+        doc.fontSize(10).text(`Category: ${f.category} | URL: ${f.affected_url || 'N/A'}`);
+        doc.moveDown(0.3);
+        doc.fontSize(10).text(`Risk / Explanation: ${f.ai_explanation || f.description || 'N/A'}`);
+        if (f.evidence) {
+          doc.moveDown(0.2);
+          doc.fontSize(9).text(`Evidence: ${String(f.evidence).slice(0, 1200)}`);
+        }
+        doc.moveDown(0.2);
+        doc.fontSize(10).text(`Remediation: ${f.ai_remediation || f.remediation || 'N/A'}`);
+        doc.moveDown();
+      });
+    }
+
+    doc.end();
+  } catch (err) {
+    console.error('[report]', err.message);
+    if (!res.headersSent) {
+      return res.status(500).json({ error: 'Failed to generate PDF report' });
+    }
   }
 });
 

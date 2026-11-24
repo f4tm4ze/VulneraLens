@@ -16,8 +16,7 @@ router.post('/', authorize('administrator', 'assessor'), async (req, res) => {
   if (!isPositiveInt(assessmentId)) {
     return res.status(400).json({ error: 'Valid assessment_id is required' });
   }
-  if (!isValidTargetUrl(target_url)) {
-    return res.status(400).json({ error: 'Valid HTTP/HTTPS target_url is required' });
+  if (!isValidTargetUrl(target_url)) {return res.status(400).json({ error: 'Target is outside the allowed scope. Only localhost / 127.0.0.1 are permitted.',  });
   }
   const type = target_type ?? 'web_app';
   if (!VALID_TYPES.includes(type)) {

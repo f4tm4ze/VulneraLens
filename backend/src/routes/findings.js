@@ -2,6 +2,7 @@ import { Router } from 'express';
 import pool from '../config/db.js';
 import { authenticate, authorize } from '../middleware/auth.js';
 import { isPositiveInt } from '../utils/validators.js';
+import { analyzeFinding } from '../services/ai.js';
 
 const router = Router();
 const VALID_DECISIONS = ['confirmed', 'false_positive', 'needs_retest', 'mitigated'];
@@ -147,15 +148,27 @@ router.post('/:id/reviews', authorize('administrator', 'assessor'), async (req, 
       return res.status(404).json({ error: 'Finding not found' });
     }
 
+    const newSeverity = req.body?.severity;
+    if (newSeverity !== undefined && !VALID_SEVERITIES.includes(newSeverity)) {
+      await connection.rollback();
+      return res.status(400).json({ error: 'Invalid severity' });
+    }
+
     const [reviewResult] = await connection.execute(
       'INSERT INTO assessor_reviews (finding_id, assessor_id, decision, remarks) VALUES (?, ?, ?, ?)',
       [findingId, req.user.id, decision, remarks || null]
     );
 
-    // Sync finding status when the decision maps directly to a finding status
-    if (['confirmed', 'false_positive', 'mitigated'].includes(decision)) {
+    const nextStatus = decision === 'needs_retest' ? 'open' : decision;
+    if (newSeverity !== undefined) {
+      await connection.execute('UPDATE findings SET status = ?, severity = ? WHERE id = ?', [
+        nextStatus,
+        newSeverity,
+        findingId,
+      ]);
+    } else {
       await connection.execute('UPDATE findings SET status = ? WHERE id = ?', [
-        decision,
+        nextStatus,
         findingId,
       ]);
     }
@@ -198,6 +211,44 @@ router.get('/:id/reviews', authorize('administrator', 'assessor'), async (req, r
     return res.json(rows);
   } catch {
     return res.status(500).json({ error: 'Failed to list reviews' });
+  }
+});
+
+// AI analysis: explanation, suggested severity, remediation (assessor must still review)
+router.post('/:id/analyze', authorize('administrator', 'assessor'), async (req, res) => {
+  const findingId = Number(req.params.id);
+  if (!isPositiveInt(findingId)) {
+    return res.status(400).json({ error: 'Invalid finding ID' });
+  }
+
+  try {
+    const [rows] = await pool.execute('SELECT * FROM findings WHERE id = ?', [findingId]);
+    if (rows.length === 0) {
+      return res.status(404).json({ error: 'Finding not found' });
+    }
+
+    const { payload, result, model, source, errors } = await analyzeFinding(rows[0]);
+
+    await pool.execute(
+      `UPDATE findings
+       SET ai_explanation = ?, ai_severity = ?, ai_confidence = ?, ai_remediation = ?,
+           ai_model = ?, ai_analyzed_at = NOW()
+       WHERE id = ?`,
+      [result.explanation, result.severity, result.confidence, result.remediation, model, findingId]
+    );
+    // Audit log: exactly what was sent (already redacted) and what came back.
+    await pool.execute(
+      `INSERT INTO ai_logs (finding_id, user_id, model, sent_payload, redacted_prompt, response_text)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [findingId, req.user.id, model, JSON.stringify(payload), JSON.stringify(payload), JSON.stringify(result)]
+    );
+
+    const [updated] = await pool.execute('SELECT * FROM findings WHERE id = ?', [findingId]);
+    // ai_source tells the UI who answered: openai (Groq etc.) | gemini | ollama | offline
+    return res.json({ ...updated[0], ai_source: source, ai_errors: errors });
+  } catch (err) {
+    console.error('[ai]', err.message);
+    return res.status(502).json({ error: `AI analysis failed: ${err.message}` });
   }
 });
 

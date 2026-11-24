@@ -9,17 +9,22 @@
     "start": "node src/server.js",
     "dev": "node --watch src/server.js",
     "db:init": "node scripts/init-db.js",
-    "db:test": "node scripts/test-db.js"
+    "db:test": "node scripts/test-db.js",
+    "db:seed": "node scripts/seed-demo.js"
   },
   "engines": {
     "node": ">=18"
   },
   "dependencies": {
+    "@google/genai": "^3.6.1",
     "bcrypt": "^6.0.0",
     "cors": "^2.8.6",
     "dotenv": "^18.0.10",
     "express": "^5.3.0",
+    "fast-xml-parser": "^5.12.1",
     "jsonwebtoken": "^9.0.3",
-    "mysql2": "^3.24.6"
+    "mysql2": "^3.24.6",
+    "openai": "^7.63.0",
+    "pdfkit": "^0.21.0"
   }
 }

@@ -93,3 +93,38 @@ CREATE TABLE IF NOT EXISTS reports (
     FOREIGN KEY (generated_by) REFERENCES users(id)
     ON DELETE RESTRICT
 );
+
+ALTER TABLE scans
+  ADD COLUMN IF NOT EXISTS evidence_path VARCHAR(500) NULL,
+  ADD COLUMN IF NOT EXISTS error_message TEXT NULL;
+
+ALTER TABLE findings
+  ADD COLUMN IF NOT EXISTS category VARCHAR(100) NOT NULL DEFAULT 'general',
+  ADD COLUMN IF NOT EXISTS ai_explanation TEXT NULL,
+  ADD COLUMN IF NOT EXISTS ai_severity ENUM('info', 'low', 'medium', 'high', 'critical') NULL,
+  ADD COLUMN IF NOT EXISTS ai_confidence VARCHAR(50) NULL,
+  ADD COLUMN IF NOT EXISTS ai_remediation TEXT NULL;
+
+CREATE TABLE IF NOT EXISTS ai_logs (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  finding_id INT NOT NULL,
+  model VARCHAR(100) NOT NULL,
+  redacted_prompt TEXT NOT NULL,
+  response_text TEXT,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT fk_ai_logs_finding
+    FOREIGN KEY (finding_id) REFERENCES findings(id)
+    ON DELETE CASCADE
+);
+
+ALTER TABLE ai_logs
+  ADD COLUMN IF NOT EXISTS user_id INT NULL,
+  ADD COLUMN IF NOT EXISTS sent_payload TEXT NULL,
+  ADD COLUMN IF NOT EXISTS redacted_prompt TEXT NULL,
+  ADD COLUMN IF NOT EXISTS response_text TEXT NULL;
+
+-- When/which AI produced the analysis shown on the Findings page.
+ALTER TABLE findings
+  ADD COLUMN IF NOT EXISTS ai_analyzed_at TIMESTAMP NULL DEFAULT NULL,
+  ADD COLUMN IF NOT EXISTS ai_model VARCHAR(100) NULL;
+
