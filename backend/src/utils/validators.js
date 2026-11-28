@@ -2,7 +2,7 @@ const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 // Only these hosts may be registered as targets (matches the proposal's scope).
 // Override in backend/.env: ALLOWED_TARGET_HOSTS=localhost,127.0.0.1
-const ALLOWED_HOSTS = (process.env.ALLOWED_TARGET_HOSTS || 'localhost,127.0.0.1')
+const ALLOWED_HOSTS = (process.env.ALLOWED_TARGET_HOSTS || 'dvwa,localhost,127.0.0.1')
   .split(',')
   .map((h) => h.trim().toLowerCase())
   .filter(Boolean);

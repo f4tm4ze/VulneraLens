@@ -1,3 +1,4 @@
+
 services:
   db:
     image: mariadb:10.4
@@ -5,9 +6,14 @@ services:
       MYSQL_ROOT_PASSWORD: rootpassword
       MYSQL_DATABASE: vulneralens_db
     ports:
-      - "3306:3306"
+      - "3307:3306"
     volumes:
       - db_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
 
   dvwa:
     image: vulnerables/web-dvwa:latest
@@ -26,20 +32,30 @@ services:
       - "5050:5050"
     environment:
       PORT: 5050
-      DB_HOST: db
+      DB_HOST: host.docker.internal
       DB_PORT: 3306
       DB_NAME: vulneralens_db
       DB_USER: root
-      DB_PASSWORD: rootpassword
-      JWT_SECRET: ${JWT_SECRET:-change_me_in_production}
-      ALLOWED_TARGET_HOSTS: localhost,127.0.0.1,dvwa
+      DB_PASSWORD: ""
+      JWT_SECRET: ${JWT_SECRET:-dev_only_vulneralens_secret_please_change_before_use_2026}
+      ALLOWED_TARGET_HOSTS: dvwa,localhost,127.0.0.1
+      DVWA_TARGET_URL: http://dvwa
       ZAP_API_URL: http://zap:8090
+      AI_PROVIDER: ${AI_PROVIDER:-gemini}
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
       GEMINI_MODEL: ${GEMINI_MODEL:-gemini-2.5-flash}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.openai.com/v1}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o-mini}
+      DVWA_USER: ${DVWA_USER:-admin}
+      DVWA_PASSWORD: ${DVWA_PASSWORD:-password}
+      DVWA_SECURITY: ${DVWA_SECURITY:-low}
+      ZAP_API_KEY: ${ZAP_API_KEY:-}
     depends_on:
-      - db
-      - dvwa
-      - zap
+      dvwa:
+        condition: service_started
+      zap:
+        condition: service_started
 
   frontend:
     build: ./frontend

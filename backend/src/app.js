@@ -5,6 +5,9 @@ import assessmentRoutes from './routes/assessments.js';
 import targetRoutes from './routes/targets.js';
 import scanRoutes from './routes/scans.js';
 import findingRoutes from './routes/findings.js';
+import adminRoutes from './routes/admin.js';
+import zapHistoryRoutes from './routes/zapHistory.js';
+import { authenticate, authorize } from './middleware/auth.js';
 
 const app = express();
 
@@ -18,6 +21,34 @@ app.use('/api/assessments', assessmentRoutes);
 app.use('/api/targets', targetRoutes);
 app.use('/api/scans', scanRoutes);
 app.use('/api/findings', findingRoutes);
+app.use('/api/admin', adminRoutes);
+app.use('/api/zap-history', zapHistoryRoutes);
+
+app.get('/api/reports', authenticate, authorize('administrator', 'assessor'), async (req, res) => {
+  try {
+    const pool = (await import('./config/db.js')).default;
+    const [rows] = await pool.execute(
+      `SELECT 
+        a.id AS assessment_id, 
+        a.name AS assessment_name, 
+        a.created_at, 
+        a.status, 
+        COUNT(DISTINCT s.id) AS scan_count, 
+        COUNT(DISTINCT f.id) AS finding_count, 
+        COALESCE(SUM(CASE WHEN f.status='confirmed' THEN 1 ELSE 0 END),0) AS confirmed_count 
+      FROM assessments a 
+      LEFT JOIN scans s ON s.assessment_id=a.id AND s.archived_at IS NULL 
+      LEFT JOIN findings f ON f.scan_id=s.id AND f.archived_at IS NULL 
+      WHERE a.archived_at IS NULL 
+      GROUP BY a.id 
+      ORDER BY a.created_at DESC`
+    );
+    return res.json(rows);
+  } catch (err) {
+    console.error('[reports]', err.message);
+    return res.status(500).json({ error: 'Failed to list reports' });
+  }
+});
 
 // 404 fallback (must stay after all routes)
 app.use((_req, res) => {

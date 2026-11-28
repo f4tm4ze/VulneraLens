@@ -33,6 +33,15 @@ CREATE TABLE IF NOT EXISTS targets (
     ON DELETE CASCADE
 );
 
+
+CREATE TABLE IF NOT EXISTS assessment_targets (
+  assessment_id INT NOT NULL,
+  target_id INT NOT NULL,
+  PRIMARY KEY (assessment_id, target_id),
+  CONSTRAINT fk_assessment_targets_assessment FOREIGN KEY (assessment_id) REFERENCES assessments(id) ON DELETE RESTRICT,
+  CONSTRAINT fk_assessment_targets_target FOREIGN KEY (target_id) REFERENCES targets(id) ON DELETE RESTRICT
+);
+
 CREATE TABLE IF NOT EXISTS scans (
   id INT AUTO_INCREMENT PRIMARY KEY,
   assessment_id INT NOT NULL,
@@ -128,3 +137,47 @@ ALTER TABLE findings
   ADD COLUMN IF NOT EXISTS ai_analyzed_at TIMESTAMP NULL DEFAULT NULL,
   ADD COLUMN IF NOT EXISTS ai_model VARCHAR(100) NULL;
 
+
+
+-- VulneraLens revision: archival, traceability, and tool execution metadata.
+ALTER TABLE assessments ADD COLUMN IF NOT EXISTS archived_at TIMESTAMP NULL DEFAULT NULL;
+ALTER TABLE assessments ADD COLUMN IF NOT EXISTS status_before_archive VARCHAR(32) NULL;
+ALTER TABLE targets MODIFY assessment_id INT NULL;
+ALTER TABLE targets ADD COLUMN IF NOT EXISTS archived_at TIMESTAMP NULL DEFAULT NULL;
+ALTER TABLE scans ADD COLUMN IF NOT EXISTS archived_at TIMESTAMP NULL DEFAULT NULL;
+ALTER TABLE scans ADD COLUMN IF NOT EXISTS tool_version VARCHAR(100) NULL;
+ALTER TABLE scans ADD COLUMN IF NOT EXISTS command_config TEXT NULL;
+ALTER TABLE scans ADD COLUMN IF NOT EXISTS stdout_text MEDIUMTEXT NULL;
+ALTER TABLE scans ADD COLUMN IF NOT EXISTS stderr_text MEDIUMTEXT NULL;
+ALTER TABLE scans ADD COLUMN IF NOT EXISTS exit_code INT NULL;
+ALTER TABLE scans ADD COLUMN IF NOT EXISTS duration_ms BIGINT NULL;
+ALTER TABLE scans ADD COLUMN IF NOT EXISTS progress_pct INT NOT NULL DEFAULT 0;
+ALTER TABLE findings ADD COLUMN IF NOT EXISTS archived_at TIMESTAMP NULL DEFAULT NULL;
+ALTER TABLE findings ADD COLUMN IF NOT EXISTS source_tool VARCHAR(100) NULL;
+ALTER TABLE findings ADD COLUMN IF NOT EXISTS http_method VARCHAR(20) NULL;
+ALTER TABLE findings ADD COLUMN IF NOT EXISTS affected_parameter VARCHAR(255) NULL;
+ALTER TABLE findings ADD COLUMN IF NOT EXISTS payload TEXT NULL;
+ALTER TABLE findings ADD COLUMN IF NOT EXISTS request_evidence MEDIUMTEXT NULL;
+ALTER TABLE findings ADD COLUMN IF NOT EXISTS response_evidence MEDIUMTEXT NULL;
+ALTER TABLE findings ADD COLUMN IF NOT EXISTS references_text TEXT NULL;
+ALTER TABLE reports ADD COLUMN IF NOT EXISTS archived_at TIMESTAMP NULL DEFAULT NULL;
+
+CREATE TABLE IF NOT EXISTS tool_runs (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  scan_id INT NOT NULL,
+  tool_name VARCHAR(80) NOT NULL,
+  tool_version VARCHAR(100) NULL,
+  command_config TEXT NULL,
+  status ENUM('pending','queued','running','completed','failed','cancelled') NOT NULL DEFAULT 'pending',
+  started_at TIMESTAMP NULL DEFAULT NULL,
+  completed_at TIMESTAMP NULL DEFAULT NULL,
+  duration_ms BIGINT NULL,
+  progress_pct INT NOT NULL DEFAULT 0,
+  stdout_text MEDIUMTEXT NULL,
+  stderr_text MEDIUMTEXT NULL,
+  exit_code INT NULL,
+  parsed_results MEDIUMTEXT NULL,
+  error_message TEXT NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT fk_tool_runs_scan FOREIGN KEY (scan_id) REFERENCES scans(id) ON DELETE RESTRICT
+);

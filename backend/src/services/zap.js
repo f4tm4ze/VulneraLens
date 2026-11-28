@@ -76,11 +76,12 @@ function mapZapRisk(risk) {
   return 'info';
 }
 
-async function pollZapStatus(endpoint, scanKey, timeoutMs = 180000) {
+async function pollZapStatus(endpoint, scanKey, timeoutMs = 180000, toolRunId = null, offset = 0, scale = 100) {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
     const data = await zapRequest(endpoint, { scanId: scanKey });
     const pct = Number(data.status ?? 0);
+    if (toolRunId !== null) await pool.execute('UPDATE tool_runs SET progress_pct=? WHERE id=?', [Math.max(0, Math.min(100, Math.round(offset + pct * scale / 100))), toolRunId]);
     if (pct >= 100) return;
     await new Promise((r) => setTimeout(r, 2000));
   }
@@ -105,7 +106,11 @@ export async function runZapScan(scanId, targetUrl) {
     [scanId]
   );
 
+  const zapStarted = Date.now();
+  const [zapRun] = await pool.execute(`INSERT INTO tool_runs (scan_id, tool_name, command_config, status, started_at) VALUES (?, 'OWASP ZAP', 'Authenticated spider followed by configured active scan via ZAP API', 'running', NOW())`, [scanId]);
   try {
+    const versionInfo = await zapRequest('/JSON/core/view/version/').catch(() => null);
+    if (versionInfo?.version) await pool.execute(`UPDATE tool_runs SET tool_version=? WHERE id=?`, [String(versionInfo.version).slice(0,100), zapRun.insertId]);
     // 1. Authenticate to DVWA and configure ZAP replacer rule for session cookie
     const cookieHeader = await authenticateDvwa(scope.url).catch(() => null);
     if (cookieHeader) {
@@ -123,11 +128,12 @@ export async function runZapScan(scanId, targetUrl) {
 
     // 2. Spider
     const spiderRes = await zapRequest('/JSON/spider/action/scan/', { url: scope.url, recurse: 'true' });
-    await pollZapStatus('/JSON/spider/view/status/', spiderRes.scan);
+    await pool.execute(`UPDATE tool_runs SET command_config=? WHERE id=?`, [`ZAP authenticated spider (${scope.url}) followed by active scan`, zapRun.insertId]);
+    await pollZapStatus('/JSON/spider/view/status/', spiderRes.scan, 180000, zapRun.insertId, 0, 40);
 
     // 3. Active Scan
     const ascanRes = await zapRequest('/JSON/ascan/action/scan/', { url: scope.url, recurse: 'true' });
-    await pollZapStatus('/JSON/ascan/view/status/', ascanRes.scan);
+    await pollZapStatus('/JSON/ascan/view/status/', ascanRes.scan, 180000, zapRun.insertId, 40, 55);
 
     // 4. Import alerts as JSON evidence
     const alertsRes = await zapRequest('/JSON/core/view/alerts/', { baseurl: scope.url });
@@ -141,6 +147,10 @@ export async function runZapScan(scanId, targetUrl) {
       const evidenceObj = {
         url: a.url,
         method: a.method,
+        requestHeader: a.requestHeader,
+        requestBody: a.requestBody,
+        responseHeader: a.responseHeader,
+        responseBody: a.responseBody,
         param: a.param,
         attack: a.attack,
         evidence: a.evidence,
@@ -150,8 +160,8 @@ export async function runZapScan(scanId, targetUrl) {
         other: a.other,
       };
       await pool.execute(
-        `INSERT INTO findings (scan_id, title, description, severity, category, affected_url, evidence, remediation)
-         VALUES (?, ?, ?, ?, 'web_vulnerability', ?, ?, ?)`,
+        `INSERT INTO findings (scan_id, title, description, severity, category, affected_url, evidence, remediation, source_tool, http_method, affected_parameter, payload, request_evidence, response_evidence, references_text)
+         VALUES (?, ?, ?, ?, 'web_vulnerability', ?, ?, ?, 'OWASP ZAP', ?, ?, ?, ?, ?, ?)`,
         [
           scanId,
           String(a.alert || a.name || 'ZAP Alert').slice(0, 200),
@@ -160,21 +170,40 @@ export async function runZapScan(scanId, targetUrl) {
           String(a.url || scope.url).slice(0, 500),
           JSON.stringify(evidenceObj, null, 2),
           a.solution || '',
+          a.method || null,
+          a.param || null,
+          a.attack || null,
+          a.requestHeader || a.requestBody || null,
+          a.responseHeader || a.responseBody || null,
+          [a.reference, a.cweid ? `CWE-${a.cweid}` : null].filter(Boolean).join('\n') || null,
         ]
       );
     }
 
+    await pool.execute(`UPDATE tool_runs SET status='completed', completed_at=NOW(), duration_ms=?, progress_pct=100, stdout_text=?, parsed_results=?, exit_code=0 WHERE id=?`, [Date.now()-zapStarted, `Spider scan ${spiderRes.scan} and active scan ${ascanRes.scan} completed. Imported ${alerts.length} alerts.`, JSON.stringify({ spider_scan_id: spiderRes.scan, active_scan_id: ascanRes.scan, alerts }), zapRun.insertId]);
     await pool.execute(
-      `UPDATE scans SET status = 'completed', evidence_path = ?, completed_at = NOW() WHERE id = ?`,
-      [jsonPath, scanId]
+      `UPDATE scans SET status = 'completed', evidence_path = ?, completed_at = NOW(), duration_ms=?, progress_pct=100, stdout_text=?, exit_code=0 WHERE id = ?`,
+      [jsonPath, Date.now()-zapStarted, `Spider scan ${spiderRes.scan} and active scan ${ascanRes.scan} completed. Imported ${alerts.length} alerts.`, scanId]
     );
 
     return { jsonPath, alertCount: alerts.length };
   } catch (err) {
+    await pool.execute(`UPDATE tool_runs SET status='failed', completed_at=NOW(), duration_ms=?, error_message=?, stderr_text=? WHERE id=?`, [Date.now()-zapStarted, err.message, err.message, zapRun.insertId]);
     await pool.execute(
-      `UPDATE scans SET status = 'failed', error_message = ?, completed_at = NOW() WHERE id = ?`,
-      [err.message, scanId]
+      `UPDATE scans SET status = 'failed', error_message = ?, completed_at = NOW(), duration_ms=?, stderr_text=? WHERE id = ?`,
+      [err.message, Date.now()-zapStarted, err.message, scanId]
     );
     throw err;
   }
+}
+/**
+ * Retrieve HTTP traffic history recorded by ZAP.
+ */
+export async function getZapHistory(start = 0, count = 100) {
+  const data = await zapRequest('/JSON/core/view/messages/', {
+    start,
+    count,
+  });
+
+  return data.messages || [];
 }

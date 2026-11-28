@@ -30,6 +30,13 @@ const SEV = {
   info: 'bg-surface text-ink',
 };
 export function Badge({ value, kind }) {
-  const cls = kind === 'severity' ? SEV[value] : 'bg-surface text-ink';
-  return <span className={`inline-block px-2 py-0.5 text-xs font-semibold ${cls}`}>{value}</span>;
+  const STATUS = {
+  open: 'status-open', confirmed: 'status-confirmed', false_positive: 'status-rejected',
+  mitigated: 'status-muted', queued: 'status-muted', running: 'status-running',
+  completed: 'status-confirmed', failed: 'status-rejected',
+};
+const cls = kind === 'severity' ? (SEV[value] || 'bg-surface text-ink') : (STATUS[value] || 'bg-surface text-ink');
+  const LABELS = { info: 'Informational', false_positive: 'Rejected', open: 'Pending review', needs_retest: 'Needs retesting' };
+  const label = LABELS[value] || (value ? value.replaceAll('_', ' ') : 'Unknown');
+  return <span className={`inline-block px-2 py-0.5 text-xs font-semibold ${cls}`}>{label}</span>;
 }
